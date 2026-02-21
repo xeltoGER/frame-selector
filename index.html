@@ -1,361 +1,135 @@
-
 <!DOCTYPE html>
 <html lang="de" class="bg-black text-white">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Frame Selector | Video Frame Extractor</title>
-    <!-- Tailwind CSS -->
+    <title>Frame Selector | Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- React & Babel Standalone (allows JSX in local HTML) -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Inter', sans-serif; margin: 0; padding: 0; }
-        input[type=range]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            height: 16px;
-            width: 16px;
-            border-radius: 0;
-            background: #ffffff;
-            cursor: pointer;
+        body { font-family: 'Inter', sans-serif; background: #000; }
+        /* Trick für Android: Video muss "sichtbar" sein zum Dekodieren */
+        .android-video-fix {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1px;
+            height: 1px;
+            opacity: 0.01;
+            pointer-events: none;
         }
-        input[type=range] {
-            -webkit-appearance: none;
-            background: #262626;
-        }
-        .fade-in { animation: fadeIn 0.5s ease-in; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/"
-  }
-}
-</script>
-
 </head>
-<body class="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 bg-black">
-    <div id="root" class="w-full max-w-5xl"></div>
+<body>
+    <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
 
-        // UTILITIES
         const formatTime = (seconds) => {
-            if (isNaN(seconds)) return "00:00:00.000";
+            if (!seconds) return "00:00.000";
             const mins = Math.floor(seconds / 60);
             const secs = Math.floor(seconds % 60);
             const ms = Math.floor((seconds % 1) * 1000);
             return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
         };
 
-        const captureFrame = (video) => {
-            try {
-                const canvas = document.createElement('canvas');
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                    // Clear context before drawing (important for some mobile browsers)
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-                    
-                    // Simple check for empty/black frames
-                    if (dataUrl.length < 1000) {
-                        console.warn("Captured frame might be empty or black.");
-                    }
-                    
-                    return dataUrl;
-                }
-            } catch (e) {
-                console.error("Capture failed", e);
-            }
-            return null;
-        };
-
-        // COMPONENTS
-        const FrameBox = ({ label, timecode, imageData, onDownload }) => (
-            <div className="flex flex-col gap-4 flex-1">
-                <div className="aspect-video bg-neutral-900 border border-neutral-800 flex items-center justify-center relative overflow-hidden group">
-                    {imageData ? (
-                        <img src={imageData} alt={label} className="w-full h-full object-contain" />
-                    ) : (
-                        <div className="text-neutral-600 font-bold tracking-widest text-xl uppercase">{label}</div>
-                    )}
-                    <div className="absolute top-2 left-2 bg-black/50 px-2 py-1 text-xs font-mono tracking-tighter">
-                        {timecode}
-                    </div>
-                </div>
-                <button
-                    onClick={onDownload}
-                    disabled={!imageData}
-                    className={`w-full py-3 border tracking-widest text-sm transition-all ${
-                        imageData 
-                        ? 'bg-transparent border-white text-white hover:bg-white hover:text-black' 
-                        : 'border-neutral-800 text-neutral-700 cursor-not-allowed'
-                    }`}
-                >
-                    DOWNLOAD
-                </button>
-            </div>
-        );
-
         const App = () => {
-            const [videoFile, setVideoFile] = useState(null);
             const [videoUrl, setVideoUrl] = useState(null);
             const [duration, setDuration] = useState(0);
-            const [isExtracting, setIsExtracting] = useState(false);
-            
             const [startFrame, setStartFrame] = useState(null);
             const [endFrame, setEndFrame] = useState(null);
             const [manualFrame, setManualFrame] = useState(null);
-            const [manualTime, setManualTime] = useState(0);
+            const [isProcessing, setIsProcessing] = useState(false);
+            
+            const videoRef = useRef(null);
 
-            const [isModalOpen, setIsModalOpen] = useState(false);
-            const [isDragging, setIsDragging] = useState(false);
-
-            const hiddenVideoRef = useRef(null);
-            const modalVideoRef = useRef(null);
-
-            // Keyboard navigation logic
-            useEffect(() => {
-                const handleKeyDown = (e) => {
-                    if (!isModalOpen || !modalVideoRef.current) return;
-                    
-                    const frameStep = 1 / 30; // 30 FPS estimation for frame steps
-
-                    if (e.key === 'ArrowRight') {
-                        e.preventDefault();
-                        modalVideoRef.current.currentTime = Math.min(duration, modalVideoRef.current.currentTime + frameStep);
-                    } else if (e.key === 'ArrowLeft') {
-                        e.preventDefault();
-                        modalVideoRef.current.currentTime = Math.max(0, modalVideoRef.current.currentTime - frameStep);
-                    }
-                };
-                window.addEventListener('keydown', handleKeyDown);
-                return () => window.removeEventListener('keydown', handleKeyDown);
-            }, [isModalOpen, duration]);
-
-            const handleFile = (file) => {
-                if (file && file.type.startsWith('video/')) {
-                    if (videoUrl) URL.revokeObjectURL(videoUrl);
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
                     const url = URL.createObjectURL(file);
-                    setVideoFile(file);
                     setVideoUrl(url);
-                    setStartFrame(null);
-                    setEndFrame(null);
-                    setManualFrame(null);
-                    setManualTime(0);
                 }
             };
 
-            const extractAutoFrames = async () => {
-                if (!videoUrl || !hiddenVideoRef.current) return;
-                setIsExtracting(true);
-                const video = hiddenVideoRef.current;
-
-                const seek = (time) => {
-                    return new Promise((resolve) => {
-                        const onSeeked = () => {
-                            video.removeEventListener('seeked', onSeeked);
-                            // Additional delay for mobile hardware decoders
-                            setTimeout(resolve, 150);
-                        };
-                        video.addEventListener('seeked', onSeeked);
-                        video.currentTime = time;
-                    });
-                };
-
-                await seek(0);
-                setStartFrame(captureFrame(video));
-                await seek(Math.max(0, video.duration - 0.1));
-                setEndFrame(captureFrame(video));
-                setIsExtracting(false);
+            const capture = async (time) => {
+                const v = videoRef.current;
+                return new Promise((resolve) => {
+                    const onSeeked = () => {
+                        v.removeEventListener('seeked', onSeeked);
+                        // Android Hardware-Buffer Delay
+                        setTimeout(() => {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = v.videoWidth;
+                            canvas.height = v.videoHeight;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+                            resolve(canvas.toDataURL('image/jpeg', 0.9));
+                        }, 250); 
+                    };
+                    v.addEventListener('seeked', onSeeked);
+                    v.currentTime = time;
+                });
             };
 
-            const downloadImage = (data, suffix) => {
-                const link = document.createElement('a');
-                link.href = data;
-                link.download = `frame_${suffix}.jpg`;
-                link.click();
+            const processAuto = async () => {
+                setIsProcessing(true);
+                const start = await capture(0.1); // 0.1s statt 0 wegen mancher Codecs
+                setStartFrame(start);
+                const end = await capture(duration - 0.1);
+                setEndFrame(end);
+                setIsProcessing(false);
             };
 
-            if (!videoUrl) {
-                return (
-                    <div 
-                        onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-                        onDragLeave={() => setIsDragging(false)}
-                        onDrop={(e) => {
-                            e.preventDefault();
-                            setIsDragging(false);
-                            if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-                        }}
-                        className={`w-full max-w-2xl mx-auto border-2 border-dashed transition-all p-12 flex flex-col items-center justify-center gap-6 ${isDragging ? 'border-white bg-neutral-900' : 'border-neutral-800 bg-black'}`}
-                    >
-                        <h1 className="text-4xl font-extrabold tracking-tighter mb-4 uppercase">Frame Selector</h1>
-                        <p className="text-neutral-400 text-center max-w-md">
-                            Einfache, hochwertige Einzelbild-Extraktion. Ziehen Sie Ihr Video hierher.
-                        </p>
-                        <label className="bg-white text-black px-8 py-4 font-bold tracking-widest cursor-pointer hover:bg-neutral-200 transition-colors uppercase">
-                            Video Auswählen
-                            <input 
-                                type="file" 
-                                className="hidden" 
-                                accept="video/*" 
-                                onChange={(e) => e.target.files && handleFile(e.target.files[0])} 
-                            />
-                        </label>
-                    </div>
-                );
-            }
+            const download = (data, name) => {
+                const a = document.createElement('a');
+                a.href = data;
+                a.download = `frame-${name}.jpg`;
+                a.click();
+            };
 
             return (
-                <div className="w-full flex flex-col gap-12 py-10 fade-in">
-                    <header className="flex flex-col md:flex-row items-center justify-between gap-4 border-b border-neutral-800 pb-8">
-                        <div>
-                            <h1 className="text-2xl font-black tracking-tighter uppercase italic">Frame Selector</h1>
-                            <p className="text-neutral-500 text-sm font-mono">{videoFile.name}</p>
+                <div className="p-8 max-w-4xl mx-auto">
+                    <h1 className="text-4xl font-black mb-8 tracking-tighter uppercase italic">Frame Selector</h1>
+                    
+                    {!videoUrl ? (
+                        <div className="border-2 border-dashed border-neutral-800 p-20 text-center">
+                            <input type="file" accept="video/*" onChange={handleFileUpload} className="hidden" id="v-up" />
+                            <label htmlFor="v-up" className="bg-white text-black px-6 py-3 cursor-pointer font-bold uppercase">Video wählen</label>
                         </div>
-                        <button 
-                            onClick={() => {
-                                URL.revokeObjectURL(videoUrl);
-                                setVideoUrl(null);
-                            }}
-                            className="text-neutral-500 hover:text-white transition-colors text-xs font-mono uppercase underline underline-offset-4"
-                        >
-                            Anderes Video hochladen
-                        </button>
-                    </header>
-
-                    <main className="flex flex-col gap-10">
-                        <div className="flex flex-wrap justify-center gap-4">
-                            <button 
-                                onClick={() => setIsModalOpen(true)}
-                                className="bg-white text-black px-10 py-4 font-bold tracking-widest hover:bg-neutral-200 transition-colors uppercase"
-                            >
-                                Manuell auswählen
-                            </button>
-                            <button 
-                                onClick={extractAutoFrames}
-                                disabled={isExtracting}
-                                className="border border-white text-white px-10 py-4 font-bold tracking-widest hover:bg-white hover:text-black transition-all uppercase disabled:opacity-50"
-                            >
-                                {isExtracting ? 'Extrahiere...' : 'Ersten & Letzten Frame laden'}
-                            </button>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                            <FrameBox 
-                                label="Start" 
-                                timecode="00:00:00.000" 
-                                imageData={startFrame} 
-                                onDownload={() => startFrame && downloadImage(startFrame, 'start')} 
+                    ) : (
+                        <div className="space-y-8">
+                            {/* Der Android-Fix-Player */}
+                            <video 
+                                ref={videoRef} 
+                                src={videoUrl} 
+                                className="android-video-fix"
+                                muted playsInline crossOrigin="anonymous"
+                                onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
                             />
-                            
-                            {manualFrame && (
-                                <FrameBox 
-                                    label="Auswahl" 
-                                    timecode={formatTime(manualTime)} 
-                                    imageData={manualFrame} 
-                                    onDownload={() => manualFrame && downloadImage(manualFrame, `manual_${manualTime.toFixed(2)}`)} 
-                                />
-                            )}
 
-                            <FrameBox 
-                                label="Ende" 
-                                timecode={formatTime(duration)} 
-                                imageData={endFrame} 
-                                onDownload={() => endFrame && downloadImage(endFrame, 'end')} 
-                            />
-                        </div>
-                    </main>
+                            <button onClick={processAuto} disabled={isProcessing} className="w-full bg-blue-600 p-4 font-bold uppercase">
+                                {isProcessing ? "Verarbeite..." : "Start/Ende automatisch extrahieren"}
+                            </button>
 
-                    <video 
-                        ref={hiddenVideoRef}
-                        src={videoUrl}
-                        className="hidden"
-                        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-                        crossOrigin="anonymous"
-                        playsInline
-                        muted
-                        preload="auto"
-                    />
-
-                    {isModalOpen && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-4 md:p-8 backdrop-blur-sm fade-in">
-                            <div className="w-full max-w-4xl bg-black border border-neutral-800 flex flex-col relative max-h-[90vh]">
-                                <div className="flex justify-between items-center p-6 border-b border-neutral-800">
-                                    <h2 className="text-xl font-black tracking-widest uppercase italic">Manuelle Auswahl</h2>
-                                    <button onClick={() => setIsModalOpen(false)} className="text-neutral-500 hover:text-white">
-                                        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                        </svg>
-                                    </button>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <p className="text-xs uppercase mb-2 text-neutral-500">Start (00:00)</p>
+                                    <div className="aspect-video bg-neutral-900 border border-neutral-800">
+                                        {startFrame && <img src={startFrame} className="w-full h-full object-contain" onClick={() => download(startFrame, 'start')} />}
+                                    </div>
                                 </div>
-
-                                <div className="flex-1 overflow-auto p-6 flex flex-col gap-6">
-                                    <div className="aspect-video bg-neutral-900 border border-neutral-800 flex items-center justify-center relative">
-                                        <video 
-                                            ref={modalVideoRef}
-                                            src={videoUrl}
-                                            className="w-full h-full object-contain"
-                                            onTimeUpdate={(e) => setManualTime(e.currentTarget.currentTime)}
-                                            crossOrigin="anonymous"
-                                            playsInline
-                                            muted
-                                            preload="auto"
-                                        />
+                                <div>
+                                    <p className="text-xs uppercase mb-2 text-neutral-500">Ende ({formatTime(duration)})</p>
+                                    <div className="aspect-video bg-neutral-900 border border-neutral-800">
+                                        {endFrame && <img src={endFrame} className="w-full h-full object-contain" onClick={() => download(endFrame, 'end')} />}
                                     </div>
-
-                                    <div className="flex flex-col gap-4">
-                                        <div className="flex justify-between items-center font-mono text-xs text-neutral-400">
-                                            <div className="flex flex-col">
-                                                <span>{formatTime(manualTime)}</span>
-                                                <span className="text-[10px] text-white opacity-60 uppercase tracking-tighter mt-1">Pfeiltasten zur Feinjustierung nutzen</span>
-                                            </div>
-                                            <span>{formatTime(duration)}</span>
-                                        </div>
-                                        <input 
-                                            type="range"
-                                            min="0"
-                                            max={duration}
-                                            step="0.001"
-                                            value={manualTime}
-                                            onChange={(e) => {
-                                                const time = parseFloat(e.target.value);
-                                                if (modalVideoRef.current) modalVideoRef.current.currentTime = time;
-                                            }}
-                                            className="w-full h-1 appearance-none outline-none cursor-pointer"
-                                        />
-                                    </div>
-
-                                    <button 
-                                        onClick={() => {
-                                            if (modalVideoRef.current) {
-                                                const frame = captureFrame(modalVideoRef.current);
-                                                setManualFrame(frame);
-                                                setIsModalOpen(false);
-                                            }
-                                        }}
-                                        className="bg-white text-black py-4 font-bold tracking-widest uppercase hover:bg-neutral-200 transition-colors"
-                                    >
-                                        Diesen Frame extrahieren
-                                    </button>
                                 </div>
                             </div>
                         </div>
                     )}
-                    
-                    <footer className="mt-10 border-t border-neutral-900 pt-8 text-center text-neutral-600 text-xs tracking-widest uppercase font-mono">
-                        Die gesamte Verarbeitung erfolgt lokal im Browser. Es werden keine Daten übertragen.
-                    </footer>
                 </div>
             );
         };
@@ -363,6 +137,5 @@
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
-
 </body>
 </html>
