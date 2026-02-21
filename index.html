@@ -3,20 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Frame Selector | Pro</title>
+    <title>Frame Selector | Grok Edition</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
-        body { font-family: 'Inter', sans-serif; background: #000; }
-        .android-video-fix {
-            position: absolute;
-            top: 0; left: 0;
-            width: 1px; height: 1px;
-            opacity: 0.01;
-            pointer-events: none;
-        }
+        body { font-family: 'Inter', sans-serif; background: #000; overflow-x: hidden; }
+        .android-video-fix { position: absolute; top: 0; left: 0; width: 1px; height: 1px; opacity: 0.01; pointer-events: none; }
+        input[type=range] { -webkit-appearance: none; background: #262626; height: 4px; border-radius: 2px; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 20px; width: 20px; background: #fff; cursor: pointer; border: 2px solid #3b82f6; }
     </style>
 </head>
 <body>
@@ -36,9 +32,7 @@
         const App = () => {
             const [videoUrl, setVideoUrl] = useState(null);
             const [duration, setDuration] = useState(0);
-            const [startFrame, setStartFrame] = useState(null);
-            const [endFrame, setEndFrame] = useState(null);
-            const [manualFrame, setManualFrame] = useState(null);
+            const [frames, setFrames] = useState({ start: null, end: null, manual: null });
             const [isProcessing, setIsProcessing] = useState(false);
             const [isModalOpen, setIsModalOpen] = useState(false);
             const [manualTime, setManualTime] = useState(0);
@@ -51,6 +45,7 @@
                 if (file) {
                     const url = URL.createObjectURL(file);
                     setVideoUrl(url);
+                    setFrames({ start: null, end: null, manual: null });
                 }
             };
 
@@ -61,7 +56,8 @@
                     canvas.height = v.videoHeight;
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-                    resolve(canvas.toDataURL('image/jpeg', 0.9));
+                    // PNG für maximale Qualität (Grok-optimiert)
+                    resolve(canvas.toDataURL('image/png'));
                 });
             };
 
@@ -71,9 +67,8 @@
                     const onSeeked = () => {
                         v.removeEventListener('seeked', onSeeked);
                         setTimeout(async () => {
-                            const data = await capture(v);
-                            resolve(data);
-                        }, 300); // Erhöhter Delay für Android
+                            resolve(await capture(v));
+                        }, 300);
                     };
                     v.addEventListener('seeked', onSeeked);
                     v.currentTime = time;
@@ -82,75 +77,85 @@
 
             const processAuto = async () => {
                 setIsProcessing(true);
-                setStartFrame(await seekAndCapture(0.1));
-                setEndFrame(await seekAndCapture(duration - 0.1));
+                const s = await seekAndCapture(0.1);
+                const e = await seekAndCapture(duration - 0.1);
+                setFrames(prev => ({ ...prev, start: s, end: e }));
                 setIsProcessing(false);
             };
 
             const download = (data, name) => {
                 const a = document.createElement('a');
                 a.href = data;
-                a.download = `frame-${name}.jpg`;
+                a.download = `grok-frame-${name}-${Date.now()}.png`;
                 a.click();
             };
 
             return (
-                <div className="p-6 max-w-4xl mx-auto">
-                    <h1 className="text-3xl font-black mb-8 tracking-tighter uppercase italic">Frame Selector</h1>
+                <div className="p-4 md:p-8 max-w-4xl mx-auto">
+                    <header className="flex justify-between items-center mb-12">
+                        <h1 className="text-3xl font-black tracking-tighter uppercase italic italic">Frame Selector <span className="text-blue-500 text-sm not-italic ml-2">PNG HQ</span></h1>
+                        {videoUrl && <button onClick={() => window.location.reload()} className="text-xs text-neutral-500 hover:text-white uppercase">Reset</button>}
+                    </header>
                     
                     {!videoUrl ? (
-                        <div className="border-2 border-dashed border-neutral-800 p-20 text-center">
+                        <div className="border-2 border-dashed border-neutral-800 rounded-xl p-16 text-center hover:border-blue-500/50 transition-colors">
                             <input type="file" accept="video/*" onChange={handleFileUpload} className="hidden" id="v-up" />
-                            <label htmlFor="v-up" className="bg-white text-black px-8 py-4 cursor-pointer font-bold uppercase hover:bg-neutral-200 transition-colors">Video laden</label>
+                            <label htmlFor="v-up" className="bg-white text-black px-10 py-5 cursor-pointer font-bold uppercase hover:scale-105 inline-block transition-transform">Video laden</label>
+                            <p className="mt-4 text-neutral-600 text-sm uppercase tracking-widest">Bereit für PNG Extraktion</p>
                         </div>
                     ) : (
-                        <div className="space-y-6">
+                        <div className="space-y-8">
                             <video ref={videoRef} src={videoUrl} className="android-video-fix" muted playsInline crossOrigin="anonymous" onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)} />
 
-                            <div className="flex flex-col gap-4">
-                                <button onClick={processAuto} disabled={isProcessing} className="bg-blue-600 p-4 font-bold uppercase disabled:opacity-50">
-                                    {isProcessing ? "Extrahiere..." : "Start & Ende automatisch"}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <button onClick={processAuto} disabled={isProcessing} className="bg-blue-600 hover:bg-blue-500 p-5 font-bold uppercase transition-all flex items-center justify-center gap-2">
+                                    {isProcessing ? "Verarbeite..." : "Auto-Extrakt (Start/Ende)"}
                                 </button>
-                                <button onClick={() => setIsModalOpen(true)} className="border border-white p-4 font-bold uppercase hover:bg-white hover:text-black transition-colors">
+                                <button onClick={() => setIsModalOpen(true)} className="border-2 border-white/20 hover:border-white p-5 font-bold uppercase transition-all">
                                     Frame manuell wählen
                                 </button>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                {[{f: startFrame, l: 'Start', n: 'start'}, {f: endFrame, l: 'Ende', n: 'end'}, {f: manualFrame, l: 'Manuell', n: 'manual'}].map((item, i) => (
-                                    item.f && (
-                                        <div key={i} className="space-y-2">
-                                            <p className="text-[10px] uppercase text-neutral-500 font-bold">{item.l}</p>
-                                            <div className="aspect-video bg-neutral-900 border border-neutral-800 group relative cursor-pointer" onClick={() => download(item.f, item.n)}>
-                                                <img src={item.f} className="w-full h-full object-contain" />
-                                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-xs font-bold">Download</div>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                {[
+                                    { f: frames.start, l: 'Startframe', n: 'start' },
+                                    { f: frames.end, l: 'Endframe', n: 'end' },
+                                    { f: frames.manual, l: 'Manual Frame', n: 'manual' }
+                                ].map((item, i) => item.f && (
+                                    <div key={i} className="space-y-3 animate-in fade-in duration-500">
+                                        <p className="text-[10px] uppercase text-blue-400 font-bold tracking-widest">{item.l}</p>
+                                        <div className="aspect-video bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden group relative cursor-pointer" onClick={() => download(item.f, item.n)}>
+                                            <img src={item.f} className="w-full h-full object-contain" />
+                                            <div className="absolute inset-0 bg-blue-600/80 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                                <span className="font-bold uppercase text-sm">Download PNG</span>
                                             </div>
                                         </div>
-                                    )
+                                    </div>
                                 ))}
                             </div>
                         </div>
                     )}
 
                     {isModalOpen && (
-                        <div className="fixed inset-0 bg-black flex flex-col p-4 z-50">
-                            <div className="flex justify-between mb-4">
-                                <span className="font-mono text-sm">{formatTime(manualTime)}</span>
-                                <button onClick={() => setIsModalOpen(false)} className="uppercase font-bold text-red-500">Schließen</button>
+                        <div className="fixed inset-0 bg-black/fb z-50 flex flex-col p-4 backdrop-blur-xl">
+                            <div className="flex justify-between items-center mb-6">
+                                <span className="font-mono text-xl bg-neutral-900 px-4 py-2 rounded border border-neutral-800">{formatTime(manualTime)}</span>
+                                <button onClick={() => setIsModalOpen(false)} className="bg-red-500/10 text-red-500 px-6 py-2 rounded-full font-bold uppercase hover:bg-red-500 hover:text-white transition-all">Schließen</button>
                             </div>
-                            <div className="flex-1 bg-black flex items-center justify-center overflow-hidden">
+                            <div className="flex-1 flex items-center justify-center bg-neutral-950 rounded-2xl border border-neutral-900 overflow-hidden shadow-2xl">
                                 <video ref={modalVideoRef} src={videoUrl} className="max-h-full max-w-full" muted playsInline crossOrigin="anonymous" onTimeUpdate={(e) => setManualTime(e.currentTarget.currentTime)} />
                             </div>
-                            <div className="py-8 space-y-6">
+                            <div className="py-10 px-4 max-w-2xl mx-auto w-full space-y-8">
                                 <input type="range" min="0" max={duration} step="0.001" value={manualTime} onChange={(e) => {
                                     const t = parseFloat(e.target.value);
                                     setManualTime(t);
                                     modalVideoRef.current.currentTime = t;
-                                }} className="w-full h-2 bg-neutral-800 appearance-none outline-none" />
+                                }} className="w-full cursor-pointer" />
                                 <button onClick={async () => {
-                                    setManualFrame(await capture(modalVideoRef.current));
+                                    const data = await capture(modalVideoRef.current);
+                                    setFrames(prev => ({ ...prev, manual: data }));
                                     setIsModalOpen(false);
-                                }} className="w-full bg-white text-black py-4 font-bold uppercase">Diesen Frame nehmen</button>
+                                }} className="w-full bg-white text-black py-5 rounded-xl font-black uppercase text-lg hover:bg-blue-500 hover:text-white transition-all">Frame erfassen</button>
                             </div>
                         </div>
                     )}
